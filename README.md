@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/mascot.png" alt="MyTokenTracker mascot" width="116" height="116">
+</p>
+
 <h1 align="center">MyTokenTracker — tracking client</h1>
 
 <p align="center">
