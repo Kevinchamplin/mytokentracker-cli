@@ -59,10 +59,21 @@ If you used the old `curl | bash` installer, `init` replaces it. It removes the 
 | `npx mytokentracker` | Local report (default: last 30 days) |
 | `npx mytokentracker init` | Connect this machine and start background sync |
 | `npx mytokentracker sync` | Upload now (`--dry-run` to preview, `--since YYYY-MM-DD`) |
-| `npx mytokentracker status` | Connection, last sync, schedule |
+| `npx mytokentracker status` | Checks the connection live, shows the last sync, the schedule and the last error, with a fix for each problem |
 | `npx mytokentracker uninstall` | Remove the schedule and the saved token |
 
 On Windows, `init` saves the token but cannot install the schedule. Add a Task Scheduler job that runs `npx -y mytokentracker sync --quiet` every 30 minutes.
+
+## When something is wrong
+
+Run `npx mytokentracker status` on the computer that stopped syncing. It contacts the server, then lists anything that needs attention:
+
+- **Token rejected:** run `init` again to reconnect.
+- **Server unreachable:** check your connection or proxy. The next scheduled run catches up on its own.
+- **Schedule not installed or not loaded:** run `init` again.
+- **No sync for a while:** usually the computer was asleep. If not, the log file shown by `status` has the details.
+
+Every failed background run is recorded, so `status` shows the last error even if you never saw it happen. The dashboard's Settings page shows each connected computer and when it last checked in.
 
 Requires Node 20 or newer. MIT licensed.
 

@@ -24,6 +24,32 @@ export async function checkToken(api, token) {
   return { ok: res.status === 422 || res.ok, status: res.status };
 }
 
+// Live check-in. Distinguishes a rejected token from an unreachable server, and
+// keeps a machine visible on the dashboard on days with nothing new to upload.
+// Servers older than /ping answer 404; fall back to the empty-batch probe.
+export async function ping(api, token, { machineId, client } = {}, timeoutMs = 8000) {
+  let res;
+  try {
+    res = await fetch(`${api}/api/v1/ping`, {
+      method: 'POST',
+      headers: headers(token),
+      body: JSON.stringify({ machine_id: machineId, client }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    return { state: 'unreachable', detail: e.name === 'TimeoutError' ? 'timed out' : e.cause?.code ?? e.message };
+  }
+  if (res.status === 401 || res.status === 403) return { state: 'rejected', status: res.status };
+  if (res.status === 404) {
+    const check = await checkToken(api, token).catch(() => null);
+    if (!check) return { state: 'unreachable', detail: 'no response' };
+    return check.ok ? { state: 'ok' } : { state: 'rejected', status: check.status };
+  }
+  if (!res.ok) return { state: 'error', status: res.status };
+  const body = await res.json().catch(() => ({}));
+  return { state: 'ok', latestCli: typeof body.latest_cli === 'string' ? body.latest_cli : null };
+}
+
 export async function uploadBuckets({ api, token, machineId, client, buckets }) {
   let upserted = 0;
   for (const batch of chunk(buckets, BATCH)) {
