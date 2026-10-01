@@ -1,0 +1,43 @@
+{
+  "name": "mytokentracker",
+  "version": "0.1.1",
+  "description": "See what your AI coding agents really cost. Local-first usage report for Claude Code, Codex, Copilot CLI, Antigravity and more, with optional sync to mytokentracker.io.",
+  "type": "module",
+  "bin": {
+    "mytokentracker": "bin/mytokentracker.js",
+    "mtt": "bin/mytokentracker.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "ccusage": "20.0.26"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "copilot-cli",
+    "antigravity",
+    "token-usage",
+    "ai-cost",
+    "llm-cost",
+    "ccusage"
+  ],
+  "homepage": "https://mytokentracker.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kevinchamplin/mytokentracker-cli.git"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Kevinchamplin/mytokentracker-cli/issues"
+  }
+}
