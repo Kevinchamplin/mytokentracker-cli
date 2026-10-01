@@ -6,7 +6,7 @@ import { closeSync, openSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
-import { checkToken, uploadBuckets } from '../src/api.js';
+import { checkToken, ping, uploadBuckets } from '../src/api.js';
 import { applyCutover, flattenDaily } from '../src/buckets.js';
 import { runDaily } from '../src/ccusage.js';
 import {
@@ -21,6 +21,7 @@ import {
   removeConfig,
   saveConfig,
 } from '../src/config.js';
+import { ago, isNewer, problems } from '../src/health.js';
 import * as legacy from '../src/legacy.js';
 import { renderReport } from '../src/report.js';
 import * as schedule from '../src/schedule.js';
@@ -34,7 +35,7 @@ Usage:
   npx mytokentracker                 Local report, last 30 days (nothing is uploaded)
   npx mytokentracker init            Connect this machine to your mytokentracker.io account
   npx mytokentracker sync            Upload usage now (init sets this up every 30 minutes)
-  npx mytokentracker status          Show connection and schedule state
+  npx mytokentracker status          Check the connection, last sync and any errors
   npx mytokentracker uninstall       Remove the schedule and the saved token
 
 Options:
@@ -118,8 +119,22 @@ function withLock(fn) {
     .finally(() => rmSync(lock, { force: true }));
 }
 
+// A failed sync is saved to the config so `status` can show it later; scheduled
+// runs only otherwise leave it in sync.log, where nobody looks.
 function sync() {
-  return withLock(syncNow);
+  return withLock(() =>
+    syncNow().catch((e) => {
+      const cfg = loadConfig();
+      if (cfg?.token && !opt['dry-run']) {
+        const message = (e.cause?.code ? `${e.message} (${e.cause.code})` : e.message).slice(0, 300);
+        const at = new Date().toISOString();
+        saveConfig({ ...cfg, lastError: { message, at }, lastAttemptAt: at });
+      }
+      // "fetch failed" alone tells nobody anything in sync.log.
+      if (e.cause?.code && !e.message.includes(e.cause.code)) e.message = `${e.message} (${e.cause.code})`;
+      throw e;
+    }),
+  );
 }
 
 async function syncNow() {
@@ -135,10 +150,18 @@ async function syncNow() {
     console.log(`  Dry run: ${buckets.length} daily bucket(s) would upload to ${cfg.api}.\n`);
     return;
   }
-  const upserted = buckets.length
-    ? await uploadBuckets({ api: cfg.api, token: cfg.token, machineId: cfg.machineId, client: CLIENT, buckets })
-    : 0;
-  saveConfig({ ...cfg, lastSyncDate: until, lastSyncAt: new Date().toISOString() });
+  let upserted = 0;
+  if (buckets.length) {
+    upserted = await uploadBuckets({ api: cfg.api, token: cfg.token, machineId: cfg.machineId, client: CLIENT, buckets });
+  } else {
+    // Nothing new, but check in so the dashboard knows this machine is alive.
+    const p = await ping(cfg.api, cfg.token, { machineId: cfg.machineId, client: CLIENT });
+    if (p.state === 'rejected') throw new Error('The API token was rejected. Run `mytokentracker init` with a fresh token.');
+    if (p.state !== 'ok') throw new Error(`Could not check in with ${cfg.api} (${p.detail ?? `HTTP ${p.status}`}).`);
+  }
+  const at = new Date().toISOString();
+  const { lastError, ...rest } = cfg;
+  saveConfig({ ...rest, lastSyncDate: until, lastSyncAt: at, lastAttemptAt: at });
   log(`Synced ${upserted} daily bucket(s), ${since} to ${until}.`);
 }
 
@@ -197,18 +220,35 @@ async function init() {
   log(`\nDone. Your dashboard: ${api}/dashboard`);
 }
 
-function status() {
+async function status() {
   const cfg = loadConfig();
-  console.log(`mytokentracker ${pkg.version}`);
-  if (!cfg?.token) return console.log('Not connected. Run `npx mytokentracker init`.');
-  console.log(`Server:      ${cfg.api}`);
+  console.log(`mytokentracker ${pkg.version}\n`);
+  if (!cfg?.token) {
+    console.log('Not connected. Run `npx mytokentracker init` to connect this computer.');
+    return;
+  }
+  const connection = await ping(cfg.api, cfg.token, { machineId: cfg.machineId, client: CLIENT }, 5000);
+  const scheduleInstalled = schedule.isInstalled();
+  const loaded = scheduleInstalled ? schedule.isLoaded() : null;
+  const label = { ok: 'Connected', rejected: 'Token rejected', unreachable: 'Server unreachable', error: 'Server error' };
+
+  console.log(`Connection:  ${label[connection.state] ?? connection.state} (${cfg.api})`);
   console.log(`Token:       ${maskToken(cfg.token)}`);
-  console.log(`Machine:     ${cfg.machineId}`);
-  console.log(`Last sync:   ${cfg.lastSyncAt ?? 'never'}`);
-  console.log(`Schedule:    ${schedule.isInstalled() ? 'installed' : 'not installed'}`);
+  console.log(`Computer:    ${cfg.machineId.slice(0, 8)} (shown under Sync status on your settings page)`);
+  console.log(`Last sync:   ${cfg.lastSyncAt ? `${ago(cfg.lastSyncAt)} (${new Date(cfg.lastSyncAt).toLocaleString()})` : 'never'}`);
+  console.log(`Schedule:    ${scheduleInstalled ? (loaded === false ? 'installed, NOT loaded' : 'every 30 minutes') : 'not installed'}`);
+  if (scheduleInstalled) console.log(`Log:         ${schedule.logFile()}`);
   if (cfg.claudeSince) console.log(`Claude from: ${cfg.claudeSince} (earlier days came from the old hook)`);
+
+  const issues = problems({ cfg, connection, scheduleInstalled, loaded });
   const left = legacy.detect();
-  if (left.length) console.log(`Warning: old install still active (${left.join(', ')}). Run init again to replace it.`);
+  if (left.length) issues.push(`The old hook install is still active (${left.join(', ')}). Run \`npx mytokentracker init\` to replace it.`);
+  if (connection.latestCli && isNewer(connection.latestCli, pkg.version)) {
+    issues.push(`Version ${connection.latestCli} is available (you have ${pkg.version}). Scheduled syncs pick it up on their own; a global install needs \`npm i -g mytokentracker\`.`);
+  }
+
+  console.log(issues.length ? `\n${issues.map((i) => `  ! ${i}`).join('\n')}` : '\nAll good.');
+  if (issues.length && connection.state !== 'ok') process.exitCode = 1;
 }
 
 // Keeps machineId and claudeSince so a later `init` on this machine replaces

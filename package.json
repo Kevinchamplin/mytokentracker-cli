@@ -1,6 +1,6 @@
 {
   "name": "mytokentracker",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "See what your AI coding agents really cost. Local-first usage report for Claude Code, Codex, Copilot CLI, Antigravity and more, with optional sync to mytokentracker.io.",
   "type": "module",
   "bin": {

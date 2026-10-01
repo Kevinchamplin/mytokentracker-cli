@@ -75,9 +75,23 @@ export function isInstalled() {
   return crontab().includes(CRON_TAG);
 }
 
+// Whether the OS scheduler actually has the job: a plist can exist while launchd
+// has it unloaded. Null where there is no cheap check (cron reads its table live).
+export function isLoaded() {
+  if (process.platform !== 'darwin') return null;
+  try {
+    execFileSync('launchctl', ['print', `gui/${process.getuid()}/${LABEL}`], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const logFile = () => join(configDir(), 'sync.log');
+
 export function install() {
   const argv = syncCommand();
-  const log = join(configDir(), 'sync.log');
+  const log = logFile();
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
 
   if (process.platform === 'darwin') {
