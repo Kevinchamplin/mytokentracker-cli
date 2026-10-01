@@ -1,11 +1,15 @@
-# mtt.py - MyTokenTracker auto-capture for the OpenAI + Anthropic Python SDKs.
+# mtt.py - MyTokenTracker auto-capture for the OpenAI, Anthropic, Google Gemini,
+# and Mistral Python SDKs.
 # Drop this file next to your code, set MTT_TOKEN in your environment, and wrap
 # your SDK responses. It is non-blocking (background thread) and fail-safe (every
 # error is swallowed, your app never breaks), and it returns the original
 # response untouched so it is a drop-in.
 #
-#   from mtt import track_openai, track_anthropic
+#   from mtt import track_openai, track_anthropic, track_google, track_mistral
 #   r = track_openai(client.chat.completions.create(...), use_case="chat")
+#   r = track_anthropic(client.messages.create(...), use_case="agent")
+#   r = track_google(client.models.generate_content(...), use_case="chat")
+#   r = track_mistral(client.chat.complete(...), use_case="chat")
 #
 # Get your token at https://mytokentracker.io/settings
 import os
@@ -71,6 +75,33 @@ def track_anthropic(resp, *, model=None, platform="python-sdk", **extra):
         "output_tokens": _g(u, "output_tokens") or 0,
         "cache_read_tokens": _g(u, "cache_read_input_tokens") or 0,
         "cache_write_tokens": _g(u, "cache_creation_input_tokens") or 0,
+        **extra,
+    })
+    return resp
+
+
+def track_google(resp, *, model=None, platform="python-sdk", **extra):
+    u = _g(resp, "usage_metadata") or {}
+    _send({
+        "provider": "google", "platform": platform,
+        "model": model or _g(resp, "model_version"),
+        "input_tokens": _g(u, "prompt_token_count") or 0,
+        # Gemini bills "thoughts" at the output rate and excludes them from the
+        # candidates count, so fold them into output for accurate cost.
+        "output_tokens": (_g(u, "candidates_token_count") or 0) + (_g(u, "thoughts_token_count") or 0),
+        "cache_read_tokens": _g(u, "cached_content_token_count") or 0,
+        **extra,
+    })
+    return resp
+
+
+def track_mistral(resp, *, model=None, platform="python-sdk", **extra):
+    u = _g(resp, "usage") or {}
+    _send({
+        "provider": "mistral", "platform": platform,
+        "model": model or _g(resp, "model"),
+        "input_tokens": _g(u, "prompt_tokens") or 0,
+        "output_tokens": _g(u, "completion_tokens") or 0,
         **extra,
     })
     return resp
